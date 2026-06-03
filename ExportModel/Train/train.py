@@ -69,7 +69,7 @@ custom_transforms = [
     A.LensFlare(),
     A.CLAHE((1, 6)),
     A.ISONoise(p=0.3),
-    A.MotionBlur((4, 10)),
+    A.MotionBlur((3, 11)),
     A.Defocus(radius_range=(1,3), alias_blur_range=(0.1, 0.4), p=0.3),
     A.ImageCompression(quality_range=(25, 75)),
     A.Downscale((0.65, 0.9)),

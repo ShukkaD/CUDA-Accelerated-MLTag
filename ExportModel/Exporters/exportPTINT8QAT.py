@@ -564,7 +564,7 @@ def main():
         A.LensFlare(),
         A.CLAHE(),
         A.ISONoise(p=0.3),
-        A.MotionBlur((3, 8)),
+        A.MotionBlur((3, 9)),
         A.Defocus(radius_range=(1,3), alias_blur_range=(0.1, 0.4), p=0.3),
         A.ImageCompression(quality_range=(25, 75)),
         A.Downscale((0.75, 0.95))
