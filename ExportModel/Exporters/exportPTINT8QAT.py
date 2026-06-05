@@ -751,7 +751,7 @@ def main():
     # Print summary while quantizers are still present
     mtq.print_quant_summary(quantized_model)
 
-    train_qat(model=quantized_model, train_loader=train_loader, epochs=1, val_loader=val_loader)
+    train_qat(model=quantized_model, train_loader=train_loader, epochs=35, val_loader=val_loader)
 
 def exportINT8():
     freeze_support()

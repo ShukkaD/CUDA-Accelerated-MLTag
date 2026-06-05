@@ -202,7 +202,7 @@ def main():
 
     model.train(
         data=str(DATA_YAML),
-        epochs=2,
+        epochs=350,
         imgsz=IMAGE_SIZE,
         batch=TRAIN_BATCH_SIZE,
         device=0,
