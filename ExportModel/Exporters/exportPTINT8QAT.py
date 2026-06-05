@@ -1,4 +1,7 @@
 import os
+import random
+import numpy as np
+from typing import Any
 
 from modelopt_compat import patch_modelopt_environment
 
@@ -12,10 +15,10 @@ from modelopt.torch.quantization.nn.modules.tensor_quantizer import TensorQuanti
 from ultralytics import YOLO
 from ultralytics.models.yolo.detect.val import DetectionValidator
 from ultralytics.data.utils import check_det_dataset
-from ultralytics.utils import DEFAULT_CFG_DICT
+from ultralytics.utils import DEFAULT_CFG_DICT, LOGGER, colorstr
 from ultralytics.data.build import build_yolo_dataset
 from ultralytics.data.dataset import YOLODataset
-from ultralytics.data.augment import Albumentations
+from ultralytics.data.augment import Albumentations, BaseTransform
 
 import logging
 import copy
@@ -28,6 +31,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 main_dir = Path(__file__).resolve().parent.parent
+train_dir = main_dir / "QATRuns"
 
 aprilTagsDatasetPath = os.path.join(main_dir, "apriltagsDataset")
 dataYAML = os.path.join(aprilTagsDatasetPath, 'data.yaml')
@@ -50,7 +54,7 @@ base_model_path = os.path.join(main_dir, 'yolo26nApriltag.pt')
 
 yolo26 = YOLO(base_model_path)
 
-# Base YOLO model before quantization.
+# Base YOLO model before quantization
 torch_model = yolo26.model
 torch_model = torch_model.to(device).eval()
 
@@ -169,11 +173,7 @@ def compute_exact_box_map_from_model(
     imgsz=imgsize,
     batch=batchsz_val,
 ):
-    """Return the exact Ultralytics mAP50-95 value from the live model.
-
-    Ultralytics computes detection mAP50-95 by accumulating per-image stats in DetectionValidator,
-    then calling `DetMetrics.process()`, which updates `metrics.box`. The documented accessor is `metrics.box.map`.
-    """
+    """Return the exact Ultralytics mAP50-95 value from the live model."""
     was_training = live_model.training
     validation_model = None
     try:
@@ -183,6 +183,7 @@ def compute_exact_box_map_from_model(
             data=data_yaml,
             imgsz=imgsz,
             batch=batch,
+            project=train_dir,
             task="detect",
             split="val",
             device=device,
@@ -360,20 +361,17 @@ def train_qat(
                 val_loss = validate(eval_model, val_loader)
                 print(f"Epoch {epoch+1} Validation Loss: {val_loss}")
 
-        # Compute exact mAP50-95 before saveExport mutates quantizer state.
         if val_loader is not None:
             validation_map = compute_exact_box_map_from_model(eval_model)
             if validation_map is not None:
                 print(f"Epoch {epoch+1} mAP@0.5:0.95: {validation_map}")
 
-        # Save LAST after validation while the live model is still intact.
         last_path = save_dir / "last"
         orig_state = {
             k: v.detach().float().clone()
             for k, v in eval_model.state_dict().items()
         }
 
-        # Save export (ModelOpt) and produce a YOLO-wrapped checkpoint when possible.
         saveExport(eval_model, last_path)
 
         with torch.inference_mode():
@@ -431,11 +429,9 @@ def train_qat(
 
         print("-" * 60)
 
-
     print("QAT training complete.")
     print("-" * 60)
     print(f"Best mAP@0.5:0.95: {best_validation_map}")
-
 
 
 def segment_to_box(line: str) -> str:
@@ -458,9 +454,7 @@ def segment_to_box(line: str) -> str:
 
 def normalize_label_files() -> None:
     for label_dir in labelDIRS:
-
         for label_file in label_dir.glob("*.txt"):
-
             lines = label_file.read_text().splitlines()
             normalized_lines = []
             changed = False
@@ -475,15 +469,113 @@ def normalize_label_files() -> None:
                 if len(parts) > 5:
                     normalized_lines.append(segment_to_box(stripped))
                     changed = True
-
                 else:
                     normalized_lines.append(stripped)
 
             if changed:
                 label_file.write_text("\n".join(normalized_lines) + ("\n" if normalized_lines else ""))
 
+
+# Safe Custom Albumentations Class
+class SafeCustomAlbumentations(BaseTransform):
+    """
+    Standard training patched Albumentations pipeline.
+    Fixes albumentationsx (coord_format) and OpenCV read-only buffers
+    Ensures exact 32-bit float types for YOLO/PyTorch tensors downstream
+    """
+    def __init__(self, p: float = 1.0, transforms: list | None = None, *args, **kwargs) -> None:
+        self.p = p
+        self.transform = None
+        prefix = colorstr("albumentations: ")
+
+        try:
+            os.environ["NO_ALBUMENTATIONS_UPDATE"] = "1"  
+            import albumentations as A
+
+            # List of possible spatial transforms natively extracted from Ultralytics
+            spatial_transforms = {
+                "Affine", "BBoxSafeRandomCrop", "CenterCrop", "CoarseDropout", "Crop",
+                "CropAndPad", "CropNonEmptyMaskIfExists", "D4", "ElasticTransform",
+                "Flip", "GridDistortion", "GridDropout", "HorizontalFlip", "Lambda",
+                "LongestMaxSize", "MaskDropout", "MixUp", "Morphological", "NoOp",
+                "OpticalDistortion", "PadIfNeeded", "Perspective", "PiecewiseAffine",
+                "PixelDropout", "RandomCrop", "RandomCropFromBorders", "RandomGridShuffle",
+                "RandomResizedCrop", "RandomRotate90", "RandomScale", "RandomSizedBBoxSafeCrop",
+                "RandomSizedCrop", "Resize", "Rotate", "SafeRotate", "ShiftScaleRotate",
+                "SmallestMaxSize", "Transpose", "VerticalFlip", "XYMasking",
+            }
+
+            T = transforms if transforms is not None else []
+
+            self.contains_spatial = any(transform.__class__.__name__ in spatial_transforms for transform in T)
+            
+            # Use standard 'class_labels' as required by Ultralytics mapping natively
+            self.transform = (
+                A.Compose(T, bbox_params=A.BboxParams(coord_format="yolo", label_fields=["class_labels"]))
+                if self.contains_spatial
+                else A.Compose(T)
+            )
+            
+            if hasattr(self.transform, "set_random_seed"):
+                self.transform.set_random_seed(torch.initial_seed())
+            LOGGER.info(prefix + ", ".join(f"{x}".replace("always_apply=False, ", "") for x in T if x.p))
+            
+        except ImportError:  
+            pass
+        except Exception as e:
+            LOGGER.info(f"{prefix}{e}")
+
+    def __call__(self, labels: dict[str, Any]) -> dict[str, Any]:
+        if self.transform is None or random.random() > self.p:
+            return labels
+
+        im = labels.get("img")
+        if im is None or im.shape[2] != 3: 
+            return labels
+
+        if self.contains_spatial:
+            cls = labels.get("cls", np.zeros((0, 1)))
+            
+            if len(cls):
+                labels["instances"].convert_bbox("xywh")
+                labels["instances"].normalize(*im.shape[:2][::-1])
+                bboxes = labels["instances"].bboxes
+            else:
+                bboxes = np.zeros((0, 4))
+
+            # Flatten array instead of squeezing for consistent lists
+            class_labels = cls.flatten().tolist() if len(cls) else []
+
+            # Apply transform normally without warning suppression
+            new = self.transform(
+                image=im,
+                bboxes=bboxes,
+                class_labels=class_labels,
+            )
+
+            # Force a deep copy to guarantee writeable memory for OpenCV
+            labels["img"] = new["image"].copy()
+            
+            if len(cls):
+                if len(new["bboxes"]):
+
+                    labels["instances"].update(bboxes=np.array(new["bboxes"], dtype=np.float32))
+                    labels["instances"].denormalize(*im.shape[:2][::-1])
+                    labels["cls"] = np.array(new["class_labels"], dtype=np.float32)[..., np.newaxis]
+                else:
+                    labels["cls"] = np.zeros((0, 1), dtype=np.float32)
+                    labels["instances"].update(bboxes=np.zeros((0, 4), dtype=np.float32))
+        else:
+            new = self.transform(image=im)
+            
+            # Force a deep copy to guarantee writeable memory for OpenCV
+            labels["img"] = new["image"].copy()
+
+        return labels
+
+
+# Wrapper of YOLODataset with augmentations from albumentationsx
 class QATYOLODataset(YOLODataset):
-    
     def __init__(self, qat_transforms, *args, **kwargs):
         # Store custom transforms before calling super() so they exist when build_transforms fires
         self.qat_custom_transforms = qat_transforms
@@ -493,29 +585,24 @@ class QATYOLODataset(YOLODataset):
         # Let YOLO build its native transform pipeline first
         transforms = super().build_transforms(hyp)
         
-        # Cleanly swap out the Albumentations wrapper natively during initialization
+        # Cleanly swap out the standard Albumentations wrapper natively during initialization
         if hasattr(self, "albumentations") and self.qat_custom_transforms:
-            qat_alb_wrapper = Albumentations(p=1.0)
-            qat_alb_wrapper.transform = A.Compose(
-                self.qat_custom_transforms,
-                bbox_params=A.BboxParams(coord_format="yolo", label_fields=["apriltag"]),
+            self.albumentations = SafeCustomAlbumentations(
+                p=1.0, 
+                transforms=self.qat_custom_transforms
             )
-            self.albumentations = qat_alb_wrapper
             
         return transforms
 
 
 def main():
-    
     normalize_label_files()
     data = check_det_dataset(dataYAML)
 
     def forward_loop(model):
         model.eval()
-
         with torch.no_grad():
             for batch_index, batch in enumerate(calib_loader, start=1):
-                # ModelOpt calibration runs the model with FP32 weights here, so keep inputs FP32.
                 images = batch["img"].to(device, non_blocking=True).float() / 255.0
                 logging.info(
                     "Calibrating batch %d/%d",
@@ -525,7 +612,6 @@ def main():
                 _ = model(images)
 
     cfg = SimpleNamespace(**DEFAULT_CFG_DICT)
-    # Safely copy hyperparameters from model.args whether dict or SimpleNamespace
     args_obj = getattr(torch_model, "args", None)
     if isinstance(args_obj, dict):
         items = args_obj.items()
@@ -654,7 +740,6 @@ def main():
         collate_fn=aprilTagsDatasetVal.collate_fn,
     )
 
-
     quantized_model = mtq.quantize(
         torch_model,
         config,
@@ -666,7 +751,7 @@ def main():
     # Print summary while quantizers are still present
     mtq.print_quant_summary(quantized_model)
 
-    train_qat(model=quantized_model, train_loader=train_loader, epochs=35, val_loader=val_loader)
+    train_qat(model=quantized_model, train_loader=train_loader, epochs=1, val_loader=val_loader)
 
 def exportINT8():
     freeze_support()
