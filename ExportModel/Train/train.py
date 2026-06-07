@@ -209,7 +209,7 @@ def main():
         imgsz=IMAGE_SIZE,
         batch=TRAIN_BATCH_SIZE,
         device=0,
-        optimizer="MuSGD",
+        optimizer="auto",
         cutmix=0.25,
         project=str(train_dir),
         augmentations=CUSTOM_TRANSFORMS
