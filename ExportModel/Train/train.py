@@ -71,25 +71,28 @@ def clear_dataset_caches() -> None:
     ):
         cache_file.unlink(missing_ok=True)
 
-
 # Custom Augmentation Pipeline
 CUSTOM_TRANSFORMS = [
+    
     A.HorizontalFlip(p=0.5),
-    A.CoarseDropout((1,3)),
-    A.ToGray(p=0.75),
-    A.Affine(scale=(0.5, 2), translate_percent=(-0.1, 0.1), rotate=(-15, 15), shear=(-15, 15), p=0.75),
-    A.Perspective(scale=(0.05, 0.15), p=0.75),
-    A.Illumination(),
-    A.RandomBrightnessContrast(),
-    A.RandomGamma((40, 160)),
-    A.LensFlare(),
+
+    #Real life deployment is always grayscale
+    A.ToGray(p=1.0),
+
+    A.Affine(scale=(0.5, 2), translate_percent=(-0.1, 0.1), rotate=(-25, 25), shear=(-15, 15), p=0.75),
+    A.Perspective(p=0.75),
+    A.Illumination(p=1.0),
+    A.RandomBrightnessContrast(brightness_range=(-0.35, 0.25), contrast_range=(-0.3, 0.3), p=1.0),
+    A.RandomGamma((75, 160)),
+    A.LensFlare(intensity_range=(0.075, 0.325)),
     A.CLAHE((1, 6)),
-    A.ISONoise(p=0.3),
-    A.MotionBlur((3, 11)),
-    A.Defocus(radius_range=(1,3), alias_blur_range=(0.1, 0.4), p=0.3),
-    A.ImageCompression(quality_range=(25, 75)),
-    A.Downscale((0.65, 0.9)),
+    A.ISONoise(intensity_range=(0.075, 0,175), p=0.3),
+    A.MotionBlur((3, 9)),
+    A.Defocus(radius_range=(1,2), alias_blur_range=(0.1, 0.4), p=0.3),
+    A.ImageCompression(quality_range=(40, 80), p=0.3),
+    A.Downscale((0.65, 0.9), p=0.3),
     A.RandomShadow(shadow_dimension=4, shadow_intensity_range=(0.2, 0.55), p=0.3)
+
 ]
 
 

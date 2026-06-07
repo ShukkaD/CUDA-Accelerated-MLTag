@@ -57,7 +57,9 @@ class AprilTagDetector():
         results[0].names = self.class_names
 
     def warmup(self, count: int = 3):
-        dummy_frame = np.zeros((INFERENCE_SIZE, INFERENCE_SIZE, 3), dtype=np.uint8)
+        # Use a grayscale dummy to match runtime input (converted to 3-channel for engine)
+        dummy_frame = np.zeros((INFERENCE_SIZE, INFERENCE_SIZE, 1), dtype=np.uint8)
+        dummy_frame = cv2.cvtColor(dummy_frame, cv2.COLOR_GRAY2BGR)
         for _ in range(count):
             results = self.model(dummy_frame, **self.predict_kwargs)
             self._apply_class_names(results)
@@ -70,8 +72,11 @@ class AprilTagDetector():
                 print("Webcam couldn't be initialized")
                 self.captureFrames = False
                 break
-
-            results = self.model(frame, **self.predict_kwargs)
+            
+            # Real-life deployment is always grayscale
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            gray_3ch = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
+            results = self.model(gray_3ch, **self.predict_kwargs)
             self._apply_class_names(results)
 
             if self.show:
