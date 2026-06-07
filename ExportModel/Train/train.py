@@ -86,7 +86,7 @@ CUSTOM_TRANSFORMS = [
     A.RandomGamma((75, 160)),
     A.LensFlare(intensity_range=(0.075, 0.325)),
     A.CLAHE((1, 6)),
-    A.ISONoise(intensity_range=(0.075, 0,175), p=0.3),
+    A.ISONoise(intensity_range=(0.075, 0.175), p=0.3),
     A.MotionBlur((3, 9)),
     A.Defocus(radius_range=(1,2), alias_blur_range=(0.1, 0.4), p=0.3),
     A.ImageCompression(quality_range=(40, 80), p=0.3),
