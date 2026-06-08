@@ -18,7 +18,7 @@ from ultralytics.data.utils import check_det_dataset
 from ultralytics.utils import DEFAULT_CFG_DICT, LOGGER, colorstr
 from ultralytics.data.build import build_yolo_dataset
 from ultralytics.data.dataset import YOLODataset
-from ultralytics.data.augment import Albumentations, BaseTransform
+from ultralytics.data.augment import BaseTransform
 
 import logging
 import copy
@@ -50,7 +50,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 logging.getLogger("modelopt").setLevel(logging.DEBUG)
 logging.getLogger("modelopt.torch.quantization").setLevel(logging.DEBUG)
 
-base_model_path = os.path.join(main_dir, 'yolo26nApriltag.pt')
+base_model_path = os.path.join(main_dir, "TrainingRuns", "train", "weights", "best.pt")
 
 yolo26 = YOLO(base_model_path)
 
@@ -639,21 +639,24 @@ def main():
     cfg.hsv_v = 0.3
 
     qat_custom_transforms = [
+            
         A.HorizontalFlip(p=0.5),
-        A.ToGray(p=0.75),
-        A.Affine(scale=(0.65, 1.85), translate_percent=(-0.075, 0.075), rotate=(-12.5, 12.5), shear=(-12.5, 12.5), p=0.75),
-        A.Perspective(scale=(0.05, 0.15), p=0.75),
-        A.RandomBrightnessContrast(),
-        A.Illumination(),
-        A.RandomBrightnessContrast(),
-        A.RandomGamma((40, 160)),
-        A.LensFlare(),
-        A.CLAHE(),
-        A.ISONoise(p=0.3),
+
+        #Real life deployment is always grayscale
+        A.ToGray(p=1.0),
+
+        A.Affine(scale=(0.5, 2), translate_percent=(-0.1, 0.1), rotate=(-25, 25), shear=(-15, 15), p=0.75),
+        A.Perspective(p=0.75),
+        A.Illumination(p=1.0),
+        A.RandomBrightnessContrast(brightness_range=(-0.35, 0.25), contrast_range=(-0.3, 0.3), p=1.0),
+        A.RandomGamma((75, 160)),
+        A.LensFlare(intensity_range=(0.075, 0.325)),
+        A.CLAHE((1, 6)),
+        A.ISONoise(intensity_range=(0.075, 0.175), p=0.3),
         A.MotionBlur((3, 9)),
-        A.Defocus(radius_range=(1,3), alias_blur_range=(0.1, 0.4), p=0.3),
-        A.ImageCompression(quality_range=(25, 75)),
-        A.Downscale((0.75, 0.95))
+        A.Defocus(radius_range=(1,2), alias_blur_range=(0.1, 0.4), p=0.3),
+        A.ImageCompression(quality_range=(40, 80), p=0.3),
+        A.Downscale((0.65, 0.9), p=0.3),
     ]
 
     calibration_paths = [
