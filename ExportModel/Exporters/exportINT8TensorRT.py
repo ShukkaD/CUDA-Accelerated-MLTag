@@ -18,7 +18,7 @@ from ultralytics import YOLO
 main_dir = Path(__file__).resolve().parent.parent
 
 raw_modelopt_path = os.path.join(main_dir, "PTCheckpoints", "best", "model.pth")
-base_model_path = os.path.join(main_dir, "yolo26nApriltag.pt")
+base_model_path = os.path.join(main_dir, "TrainingRuns", "train", "weights", "best.pt")
 base_model = YOLO(base_model_path, task="detect")
 base_model_names = base_model.names
 
